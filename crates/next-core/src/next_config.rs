@@ -102,7 +102,7 @@ pub struct NextConfig {
     trailing_slash: Option<bool>,
     asset_prefix: Option<RcStr>,
     base_path: Option<RcStr>,
-    skip_middleware_url_normalize: Option<bool>,
+    skip_proxy_url_normalize: Option<bool>,
     skip_trailing_slash_redirect: Option<bool>,
     i18n: Option<I18NConfig>,
     cross_origin: Option<CrossOriginConfig>,
@@ -1660,8 +1660,8 @@ impl NextConfig {
     }
 
     #[turbo_tasks::function]
-    pub fn skip_middleware_url_normalize(&self) -> Vc<bool> {
-        Vc::cell(self.skip_middleware_url_normalize.unwrap_or(false))
+    pub fn skip_proxy_url_normalize(&self) -> Vc<bool> {
+        Vc::cell(self.skip_proxy_url_normalize.unwrap_or(false))
     }
 
     #[turbo_tasks::function]
@@ -1672,10 +1672,10 @@ impl NextConfig {
     /// Returns the final asset prefix. If an assetPrefix is set, it's used.
     /// Otherwise, the basePath is used.
     #[turbo_tasks::function]
-    pub async fn computed_asset_prefix(self: Vc<Self>) -> Result<Vc<Option<RcStr>>> {
+    pub async fn computed_asset_prefix(self: Vc<Self>) -> Result<Vc<RcStr>> {
         let this = self.await?;
 
-        Ok(Vc::cell(Some(
+        Ok(Vc::cell(
             format!(
                 "{}/_next/",
                 if let Some(asset_prefix) = &this.asset_prefix {
@@ -1686,7 +1686,7 @@ impl NextConfig {
                 .trim_end_matches('/')
             )
             .into(),
-        )))
+        ))
     }
 
     /// Returns the suffix to use for chunk loading.

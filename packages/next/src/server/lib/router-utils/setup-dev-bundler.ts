@@ -113,7 +113,7 @@ export interface DevRoutesManifest {
   redirects: RoutesManifest['redirects']
   headers: RoutesManifest['headers']
   i18n: RoutesManifest['i18n']
-  skipMiddlewareUrlNormalize: RoutesManifest['skipMiddlewareUrlNormalize']
+  skipProxyUrlNormalize: RoutesManifest['skipProxyUrlNormalize']
 }
 
 export type ServerFields = {
@@ -145,6 +145,7 @@ async function verifyTypeScript(opts: SetupOpts) {
     disableStaticImages: opts.nextConfig.images.disableStaticImages,
     hasAppDir: !!opts.appDir,
     hasPagesDir: !!opts.pagesDir,
+    isolatedDevBuild: opts.nextConfig.experimental.isolatedDevBuild,
   })
 
   if (verifyResult.version) {
@@ -253,7 +254,7 @@ async function startWatcher(
     redirects: opts.fsChecker.redirects,
     headers: opts.fsChecker.headers,
     i18n: nextConfig.i18n || undefined,
-    skipMiddlewareUrlNormalize: nextConfig.skipMiddlewareUrlNormalize,
+    skipProxyUrlNormalize: nextConfig.skipProxyUrlNormalize,
   }
   await fs.promises.writeFile(
     routesManifestPath,
@@ -408,7 +409,7 @@ async function startWatcher(
             `Both "${MIDDLEWARE_FILENAME}" and "${PROXY_FILENAME}" files are detected. Please use "${PROXY_FILENAME}" instead.`
           )
         }
-        Log.warn(
+        Log.warnOnce(
           `The "${MIDDLEWARE_FILENAME}" file convention is deprecated. Please use "${PROXY_FILENAME}" instead.`
         )
       }
