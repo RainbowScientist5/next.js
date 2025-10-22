@@ -6,6 +6,7 @@ related:
   title: Related
   description: View related API references.
   links:
+    - app/api-reference/directives/use-cache-private
     - app/api-reference/config/next-config-js/cacheComponents
     - app/api-reference/config/next-config-js/cacheLife
     - app/api-reference/functions/cacheTag
@@ -15,17 +16,17 @@ related:
 
 The `use cache` directive allows you to mark a route, React component, or a function as cacheable. It can be used at the top of a file to indicate that all exports in the file should be cached, or inline at the top of function or component to cache the return value.
 
+> **Good to know:** For caching user-specific content that requires access to cookies or headers, see [`'use cache: private'`](/docs/app/api-reference/directives/use-cache-private).
+
 ## Usage
 
-`use cache` is currently an experimental feature. To enable it, add the [`cacheComponents`](/docs/app/api-reference/config/next-config-js/cacheComponents) option to your `next.config.ts` file:
+`use cache` is a Cache Components feature. To enable it, add the [`cacheComponents`](/docs/app/api-reference/config/next-config-js/cacheComponents) option to your `next.config.ts` file:
 
 ```ts filename="next.config.ts" switcher
 import type { NextConfig } from 'next'
 
 const nextConfig: NextConfig = {
-  experimental: {
-    cacheComponents: true,
-  },
+  cacheComponents: true,
 }
 
 export default nextConfig
@@ -34,9 +35,7 @@ export default nextConfig
 ```js filename="next.config.js" switcher
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  experimental: {
-    cacheComponents: true,
-  },
+  cacheComponents: true,
 }
 
 module.exports = nextConfig
@@ -107,6 +106,8 @@ The return value of the cacheable function must be serializable. This ensures th
 When used at the top of a [layout](/docs/app/api-reference/file-conventions/layout) or [page](/docs/app/api-reference/file-conventions/page), the route segment will be prerendered, allowing it to later be [revalidated](#during-revalidation).
 
 This means `use cache` cannot be used with [request-time APIs](/docs/app/getting-started/partial-prerendering#dynamic-rendering) like `cookies` or `headers`.
+
+> **Note:** If you need to cache content that depends on cookies, headers, or search params, use [`'use cache: private'`](/docs/app/api-reference/directives/use-cache-private) instead.
 
 ## `use cache` at runtime
 
@@ -367,6 +368,7 @@ Learn how to [configure caching](/docs/app/guides/self-hosting#caching-and-isr) 
 
 ## Version History
 
-| Version   | Changes                                                 |
-| --------- | ------------------------------------------------------- |
-| `v15.0.0` | `"use cache"` is introduced as an experimental feature. |
+| Version   | Changes                                                     |
+| --------- | ----------------------------------------------------------- |
+| `v16.0.0` | `"use cache"` is enabled with the Cache Components feature. |
+| `v15.0.0` | `"use cache"` is introduced as an experimental feature.     |

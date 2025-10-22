@@ -34,6 +34,7 @@ import {
   isPrefetchTaskDirty,
   type PrefetchTask,
   type PrefetchSubtaskResult,
+  startRevalidationCooldown,
 } from './scheduler'
 import { getAppBuildId } from '../../app-build-id'
 import { createHrefFromUrl } from '../router-reducer/create-href-from-url'
@@ -75,7 +76,7 @@ import {
   normalizeFlightData,
   prepareFlightRouterStateForRequest,
 } from '../../flight-data-helpers'
-import { STATIC_STALETIME_MS } from '../router-reducer/prefetch-cache-utils'
+import { STATIC_STALETIME_MS } from '../router-reducer/reducers/navigate-reducer'
 import { pingVisibleLinks } from '../links'
 import { PAGE_SEGMENT_KEY } from '../../../shared/lib/segment'
 import {
@@ -326,6 +327,9 @@ export function revalidateEntireCache(
   tree: FlightRouterState
 ) {
   currentCacheVersion++
+
+  // Start a cooldown before re-prefetching to allow CDN cache propagation.
+  startRevalidationCooldown()
 
   // Clearing the cache also effectively rejects any pending requests, because
   // when the response is received, it gets written into a cache entry that is
@@ -1127,9 +1131,7 @@ function convertTreePrefetchToRouteTree(
         const renderedSearch = '' as NormalizedSearch
         const childParamKey =
           // The server omits this field from the prefetch response when
-          // clientParamParsing is enabled. The flag only exists while we're
-          // testing the feature, in case there's a bug and we need to revert.
-          // TODO: Remove once clientParamParsing is enabled everywhere.
+          // cacheComponents is enabled.
           childServerSentParamKey !== null
             ? childServerSentParamKey
             : // If no param key was sent, use the value parsed on the client.
@@ -1452,10 +1454,10 @@ export async function fetchRouteOnCacheMiss(
           routeCacheLru.updateSize(entry, size)
         }
       )
-      const serverData = await (createFromNextReadableStream(
+      const serverData = await createFromNextReadableStream<RootTreePrefetch>(
         prefetchStream,
         headers
-      ) as Promise<RootTreePrefetch>)
+      )
       if (serverData.buildId !== getAppBuildId()) {
         // The server build does not match the client. Treat as a 404. During
         // an actual navigation, the router will trigger an MPA navigation.
@@ -1504,10 +1506,11 @@ export async function fetchRouteOnCacheMiss(
           routeCacheLru.updateSize(entry, size)
         }
       )
-      const serverData = await (createFromNextReadableStream(
-        prefetchStream,
-        headers
-      ) as Promise<NavigationFlightResponse>)
+      const serverData =
+        await createFromNextReadableStream<NavigationFlightResponse>(
+          prefetchStream,
+          headers
+        )
       if (serverData.b !== getAppBuildId()) {
         // The server build does not match the client. Treat as a 404. During
         // an actual navigation, the router will trigger an MPA navigation.
@@ -1525,7 +1528,7 @@ export async function fetchRouteOnCacheMiss(
         // The non-PPR response format is what we'd get if we prefetched these segments
         // using the LoadingBoundary fetch strategy, so mark their cache entries accordingly.
         FetchStrategy.LoadingBoundary,
-        response,
+        response as RSCResponse<NavigationFlightResponse>,
         serverData,
         entry,
         couldBeIntercepted,
@@ -1789,7 +1792,7 @@ export async function fetchSegmentPrefetchesUsingDynamicRequest(
       Date.now(),
       task,
       fetchStrategy,
-      response,
+      response as RSCResponse<NavigationFlightResponse>,
       serverData,
       isResponsePartial,
       route,
@@ -1812,7 +1815,7 @@ function writeDynamicTreeResponseIntoCache(
     | FetchStrategy.LoadingBoundary
     | FetchStrategy.PPRRuntime
     | FetchStrategy.Full,
-  response: RSCResponse,
+  response: RSCResponse<NavigationFlightResponse>,
   serverData: NavigationFlightResponse,
   entry: PendingRouteCacheEntry,
   couldBeIntercepted: boolean,
@@ -1917,7 +1920,7 @@ function writeDynamicRenderResponseIntoCache(
     | FetchStrategy.LoadingBoundary
     | FetchStrategy.PPRRuntime
     | FetchStrategy.Full,
-  response: RSCResponse,
+  response: RSCResponse<NavigationFlightResponse>,
   serverData: NavigationFlightResponse,
   isResponsePartial: boolean,
   route: FulfilledRouteCacheEntry,
@@ -1986,6 +1989,7 @@ function writeDynamicRenderResponseIntoCache(
         fetchStrategy,
         route,
         staleAt,
+        flightData.tree,
         seedData,
         isResponsePartial,
         cacheKey,
@@ -2041,6 +2045,7 @@ function writeSeedDataIntoCache(
     | FetchStrategy.Full,
   route: FulfilledRouteCacheEntry,
   staleAt: number,
+  flightRouterState: FlightRouterState,
   seedData: CacheNodeSeedData,
   isResponsePartial: boolean,
   cacheKey: SegmentCacheKey,
@@ -2055,8 +2060,8 @@ function writeSeedDataIntoCache(
   // want to treat a dynamic response as if it were static. The two examples
   // where this happens are <Link prefetch={true}> (which implicitly opts
   // dynamic data into being static) and when prefetching a PPR-disabled route
-  const rsc = seedData[1]
-  const loading = seedData[3]
+  const rsc = seedData[0]
+  const loading = seedData[2]
   const isPartial = rsc === null || isResponsePartial
 
   // We should only write into cache entries that are owned by us. Or create
@@ -2107,46 +2112,58 @@ function writeSeedDataIntoCache(
     }
   }
   // Recursively write the child data into the cache.
-  const seedDataChildren = seedData[2]
-  if (seedDataChildren !== null) {
-    for (const parallelRouteKey in seedDataChildren) {
-      const childSeedData = seedDataChildren[parallelRouteKey]
-      if (childSeedData !== null) {
-        const childSegment = childSeedData[0]
-        const childRequestKeyPart = createSegmentRequestKeyPart(childSegment)
-        const childRequestKey = appendSegmentRequestKeyPart(
-          requestKey,
-          parallelRouteKey,
-          childRequestKeyPart
-        )
-        const childCacheKey = appendSegmentCacheKeyPart(
-          cacheKey,
-          parallelRouteKey,
-          createSegmentCacheKeyPart(childRequestKeyPart, childSegment)
-        )
-        writeSeedDataIntoCache(
-          now,
-          task,
-          fetchStrategy,
-          route,
-          staleAt,
-          childSeedData,
-          isResponsePartial,
-          childCacheKey,
-          childRequestKey,
-          entriesOwnedByCurrentTask
-        )
-      }
+  const flightRouterStateChildren = flightRouterState[1]
+  const seedDataChildren = seedData[1]
+  for (const parallelRouteKey in flightRouterStateChildren) {
+    const childFlightRouterState = flightRouterStateChildren[parallelRouteKey]
+    const childSeedData: CacheNodeSeedData | null | void =
+      seedDataChildren[parallelRouteKey]
+    if (childSeedData !== null && childSeedData !== undefined) {
+      const childSegment = childFlightRouterState[0]
+      const childRequestKeyPart = createSegmentRequestKeyPart(childSegment)
+      const childRequestKey = appendSegmentRequestKeyPart(
+        requestKey,
+        parallelRouteKey,
+        childRequestKeyPart
+      )
+      const childCacheKey = appendSegmentCacheKeyPart(
+        cacheKey,
+        parallelRouteKey,
+        createSegmentCacheKeyPart(childRequestKeyPart, childSegment)
+      )
+      writeSeedDataIntoCache(
+        now,
+        task,
+        fetchStrategy,
+        route,
+        staleAt,
+        childFlightRouterState,
+        childSeedData,
+        isResponsePartial,
+        childCacheKey,
+        childRequestKey,
+        entriesOwnedByCurrentTask
+      )
     }
   }
 }
 
-async function fetchPrefetchResponse(
+async function fetchPrefetchResponse<T>(
   url: URL,
   headers: RequestHeaders
-): Promise<RSCResponse | null> {
+): Promise<RSCResponse<T> | null> {
   const fetchPriority = 'low'
-  const response = await createFetch(url, headers, fetchPriority)
+  // When issuing a prefetch request, don't immediately decode the response; we
+  // use the lower level `createFromResponse` API instead because we need to do
+  // some extra processing of the response stream. See
+  // `createPrefetchResponseStream` for more details.
+  const shouldImmediatelyDecode = false
+  const response = await createFetch<T>(
+    url,
+    headers,
+    fetchPriority,
+    shouldImmediatelyDecode
+  )
   if (!response.ok) {
     return null
   }
